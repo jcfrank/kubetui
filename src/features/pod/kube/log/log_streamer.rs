@@ -5,6 +5,11 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
+    fs::File,
+    io::{
+        prelude::Write,
+        LineWriter,
+    },
 };
 
 use anyhow::Result;
@@ -147,6 +152,8 @@ impl LogStreamer {
 
     async fn fetch(&self, prefix: &str, last_timestamp: &mut Option<DateTime<Utc>>) -> Result<()> {
         let log_params = self.log_params(last_timestamp);
+        let log_file = File::create("/tmp/log_file.log")?;
+        let mut log_file = LineWriter::new(log_file);
 
         let api: Api<Pod> = Api::namespaced(self.client.to_client(), self.namespace());
 
@@ -156,6 +163,10 @@ impl LogStreamer {
             let mut buf = self.log_buffer.lock().await;
 
             if let Ok((dt, content)) = chrono::DateTime::parse_and_remainder(&line, "%+") {
+                log_file
+                    .write_all(&content.as_bytes())
+                    .expect("write failed");
+
                 let dt: DateTime<Utc> = dt.into();
 
                 if last_timestamp.is_some_and(|lts| dt <= lts) {
@@ -170,6 +181,10 @@ impl LogStreamer {
 
                 *last_timestamp = Some(dt);
             } else {
+                log_file
+                    .write_all(&line.as_bytes())
+                    .expect("write failed");
+
                 if self.is_exclude(&line) || !self.is_include(&line) {
                     continue;
                 }
