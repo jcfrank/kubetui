@@ -5,11 +5,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    fs::File,
-    io::{
-        prelude::Write,
-        LineWriter,
-    },
 };
 
 use anyhow::Result;
@@ -19,7 +14,7 @@ use futures::{AsyncBufReadExt, TryStreamExt};
 use k8s_openapi::api::core::v1::Pod;
 use kube::{api::LogParams, Api};
 use regex::Regex;
-use tokio::time;
+use tokio::{fs::File, io::AsyncWriteExt, time};
 
 use crate::{
     kube::KubeClient,
@@ -152,8 +147,7 @@ impl LogStreamer {
 
     async fn fetch(&self, prefix: &str, last_timestamp: &mut Option<DateTime<Utc>>) -> Result<()> {
         let log_params = self.log_params(last_timestamp);
-        let log_file = File::create("/tmp/log_file.log")?;
-        let mut log_file = LineWriter::new(log_file);
+        let mut log_file = File::create("/tmp/log_file.log").await?;
 
         let api: Api<Pod> = Api::namespaced(self.client.to_client(), self.namespace());
 
@@ -164,8 +158,8 @@ impl LogStreamer {
 
             if let Ok((dt, content)) = chrono::DateTime::parse_and_remainder(&line, "%+") {
                 log_file
-                    .write_all(&content.as_bytes())
-                    .expect("write failed");
+                    .write_all(format!("{}\n", content).as_bytes())
+                    .await?;
 
                 let dt: DateTime<Utc> = dt.into();
 
@@ -181,9 +175,7 @@ impl LogStreamer {
 
                 *last_timestamp = Some(dt);
             } else {
-                log_file
-                    .write_all(&line.as_bytes())
-                    .expect("write failed");
+                log_file.write_all(format!("{}\n", line).as_bytes()).await?;
 
                 if self.is_exclude(&line) || !self.is_include(&line) {
                     continue;
